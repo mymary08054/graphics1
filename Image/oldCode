@@ -1,0 +1,20 @@
+#define BLUR_MASK_SIZE 3
+#define BLUR_MASK_CENTER .25
+#define BLUR_MASK_PLUS 0.125
+#define BLUR_MASK_CROSS 0.0625
+#define BLUR_MASK_REDISTR_1 .291666 //redistribute value for when one side is missing
+#define BLUR_MASK_REDISTR_2 .4375 //redistribute value for when 2 sides are missing 
+
+#define BLUR_MASK_SIZE 3
+#define BLUR_MASK_CENTER .1666
+#define BLUR_MASK_PLUS .125
+#define BLUR_MASK_CROSS 0.08333
+#define BLUR_MASK_REDISTR_1 .07291666 //redistribute value for when one side is missing
+#define BLUR_MASK_REDISTR_2 .125 //redistribute value for when 2 sides are missing 
+
+#define BLUR_MASK_SIZE 3
+#define BLUR_MASK_CENTER .1111
+#define BLUR_MASK_PLUS .1111
+#define BLUR_MASK_CROSS 0.1111
+#define BLUR_MASK_REDISTR_1 .08333 //redistribute value for when one side is missing
+#define BLUR_MASK_REDISTR_2 .13888 //redistribute value for when 2 sides are missing 

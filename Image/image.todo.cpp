@@ -1,0 +1,1068 @@
+#include "image.h"
+#include <stdlib.h>
+#include <math.h>
+#include <cmath>
+#include <time.h>
+
+#define MIN_START 256 
+#define MAX_START -1
+#define MIN_RGB 0
+#define MAX_RGB 255
+#define NUM_CONVERSION_COMPONENTS 3
+#define R_LUMA_FACTOR .3
+#define G_LUMA_FACTOR .59
+#define B_LUMA_FACTOR .11
+
+////////////////////////////
+// Image processing stuff //
+////////////////////////////
+Pixel::Pixel(const Pixel32& p)
+{
+}
+Pixel32::Pixel32(const Pixel& p)
+{
+}
+
+int Image32::rgbTruncate(int value) const
+{
+    if(value < MIN_RGB)
+        return MIN_RGB;
+    else if (value > MAX_RGB)
+        return MAX_RGB;
+    return value;
+}
+
+int Image32::AddRandomNoise(const float& noise,Image32& outputImage) const
+{
+    if (noise >= 0 && noise <= 1)
+    {
+        int width = this->w, height = this->h, rNum;
+        int range = noise * MAX_RGB;
+        outputImage.setSize(width, height);
+        Pixel32 pin;
+        srand (time(NULL));
+
+        for (int x = 0; x < width; x++)
+        {
+            for (int y = 0; y < height; y++)
+            {
+                pin = this->pixel(x,y);
+                rNum = rand() % (range * 2);
+                outputImage.pixel(x,y).r = rgbTruncate((pin.r - range) + rNum);
+                rNum = rand() % (range * 2);
+                outputImage.pixel(x,y).g = rgbTruncate((pin.g - range) + rNum);
+                rNum = rand() % (range * 2);
+                outputImage.pixel(x,y).b = rgbTruncate((pin.b - range) + rNum);
+            }
+        }
+	    return 1;
+    }
+    return 0;
+}
+
+int Image32::Brighten(const float& brightness,Image32& outputImage) const
+{
+    int width = this->w, height = this->h, rNum;
+    outputImage.setSize(width, height);
+    Pixel32 pin;
+    for (int x = 0; x < width; x++)
+    {
+        for (int y = 0; y < height; y++)
+        {
+            pin = this->pixel(x,y);
+            outputImage.pixel(x,y).r   = rgbTruncate(brightness * pin.r );
+            outputImage.pixel(x,y).g = rgbTruncate(brightness * pin.g);
+            outputImage.pixel(x,y).b  = rgbTruncate(brightness * pin.b);
+        }
+    }
+	return 1;
+}
+
+int Image32::Luminance(Image32& outputImage) const
+{
+    int width = this->w, height = this->h, rNum;
+    outputImage.setSize(width, height);
+    Pixel32 pin;
+
+    for (int x = 0; x < width; x++)
+    {
+        for (int y = 0; y < height; y++)
+        {
+            pin = this->pixel(x,y);
+            outputImage.pixel(x,y).r = outputImage.pixel(x,y).g = outputImage.pixel(x,y).b = pin.r*R_LUMA_FACTOR + pin.g*G_LUMA_FACTOR + pin.b*B_LUMA_FACTOR;
+        }
+    }
+    return 1;
+
+}
+
+int Image32::Contrast(const float& contrast,Image32& outputImage) const
+{
+	int width = this->w, height = this->h;
+    outputImage.setSize(width, height);
+    Pixel32 pin;
+
+    for (int x = 0; x < width; x++)
+    {
+        for (int y = 0; y < height; y++)
+        {
+            pin = this->pixel(x,y);
+            outputImage.pixel(x,y).r   = rgbTruncate(contrast * (pin.r) + (1-contrast)*128);
+            outputImage.pixel(x,y).g = rgbTruncate(contrast * (pin.g) + (1-contrast)*128);
+            outputImage.pixel(x,y).b  = rgbTruncate(contrast * (pin.b) + (1-contrast)*128);
+        }
+    }
+    return 1;
+}
+
+int Image32::Saturate(const float& saturation,Image32& outputImage) const
+{
+	int width = this->w, height = this->h, bw; //bw is the black and white degenerate image
+    outputImage.setSize(width, height);
+    Pixel32 pin;
+
+    for (int x = 0; x < width; x++)
+    {
+        for (int y = 0; y < height; y++)
+        {
+            pin = this->pixel(x,y);
+            bw = outputImage.pixel(x,y).r = outputImage.pixel(x,y).g = outputImage.pixel(x,y).b = pin.r*R_LUMA_FACTOR + pin.g*G_LUMA_FACTOR + pin.b*B_LUMA_FACTOR;
+            outputImage.pixel(x,y).r = rgbTruncate(saturation * (pin.r) + (1-saturation)*bw);
+            outputImage.pixel(x,y).g = rgbTruncate(saturation * (pin.g) + (1-saturation)*bw);
+            outputImage.pixel(x,y).b = rgbTruncate(saturation * (pin.b) + (1-saturation)*bw);
+        }
+    }
+    return 1;
+}
+
+/*Round the given rgb channel to the correct value*/
+int Image32::quantizeRound(int qRanges [], int qValues [], int rgbValue, int qBits) const
+{
+    for(int i = 0; i < qBits - 1; i++)
+    {
+        if(qRanges[i] >= rgbValue)
+        {
+            return qValues[i];
+        }
+    }
+    return -1; //error
+}
+
+int Image32::Quantize(const int& bits,Image32& outputImage) const
+{
+    int width = this->w, height = this->h;
+    outputImage.setSize(width, height);
+    Pixel32 pin;
+    
+    int qBits = pow(2,bits);
+    int rangeBit = (MAX_RGB/(qBits));
+    int valueBit = (MAX_RGB/(qBits-1));
+    int qRanges [qBits];
+    int qValues [qBits];
+    for( int i = 0; i < qBits; i++)
+    {
+        qRanges[i] = (i + 1) * rangeBit;
+        qValues[i] = i * valueBit;
+    }
+    
+    for (int x = 0; x < width; x++)
+    {
+        for (int y = 0; y < height; y++)
+        {
+            //printf("x: %d y: %d\n", x, y);
+            pin = this->pixel(x,y);
+            outputImage.pixel(x,y).r = rgbTruncate(int(pin.r/rangeBit)*valueBit);
+            outputImage.pixel(x,y).g = rgbTruncate(int(pin.g/rangeBit)*valueBit);
+            outputImage.pixel(x,y).b = rgbTruncate(int(pin.b/rangeBit)*valueBit);
+        }
+    }
+    return 1;
+}
+
+int Image32::RandomDither(const int& bits,Image32& outputImage) const
+{
+    /*this->AddRandomNoise(.5, outputImage);
+    outputImage.Quantize(bits, outputImage);
+    
+    return 1;*/
+
+    int width = this->w, height = this->h;
+    outputImage.setSize(width, height);
+    Pixel32 pin;
+    
+    //Components to add noise
+    int rNum, range = .5 * MAX_RGB; //lecture slides (Image Sampling) suggested noise of [-.5,.5]
+    srand (time(NULL));
+    
+    //components for quantizing
+    int qBits = pow(2,bits); //number of ranges required for given number of bits
+    int rangeBit = (MAX_RGB/(qBits));
+    int valueBit = (MAX_RGB/(qBits-1));
+    int qRanges [qBits];
+    int qValues [qBits];
+    for( int i = 0; i < qBits; i++)
+    {
+        qRanges[i] = (i + 1) * rangeBit;
+        qValues[i] = i * valueBit;
+    }
+    
+    for (int x = 0; x < width; x++)
+    {
+        for (int y = 0; y < height; y++)
+        {
+            //printf("x: %d y: %d\n", x, y);
+            pin = this->pixel(x,y);
+            rNum = rand() % (range * 2);
+            outputImage.pixel(x,y).r = rgbTruncate(int(rgbTruncate((pin.r - range) + rNum)/rangeBit)*valueBit);
+            rNum = rand() % (range * 2);
+            outputImage.pixel(x,y).g = rgbTruncate(int(rgbTruncate((pin.g - range) + rNum)/rangeBit)*valueBit);
+            rNum = rand() % (range * 2);
+            outputImage.pixel(x,y).b = rgbTruncate(int(rgbTruncate((pin.b - range) + rNum)/rangeBit)*valueBit);
+        }
+    }
+    return 1;
+
+}
+
+int Image32::orderedDitherRound( int qValues [], int valueBit, int rgbValue, int qBits, int dMatrix[2][2], int i, int j, int bits) const
+{
+    int rgbFloor = -1; //floor of the rgbValue relative to the range of values in qRanges
+    int c = 0; //for use in and after for loop
+    while(rgbFloor == -1 && c < qBits)
+    {
+        if(qValues[c] > rgbValue)
+        {
+            rgbFloor = qValues[c - 1];
+        } else if (qValues[c] == rgbValue) {
+            rgbFloor = qValues[c];
+        } else {
+            c++;
+        }
+    }
+    //printf("qValues[l]: %d rgbValue: %d\n", qValues[c], rgbValue);
+    int c1 = rgbValue*(pow(2,bits)-1);
+    int error = (c1 - rgbFloor);
+    int matrixValue = dMatrix[j][i]/(qBits+1);
+    if(error > matrixValue) //quantize down; floor
+        return qValues[c];
+    else //quantize up; ciel
+        return rgbFloor;
+}
+
+int Image32::OrderedDither2X2(const int& bits,Image32& outputImage) const
+{
+    int width = this->w, height = this->h, i, j; //i,j used to determine index of matrix for dithering
+    outputImage.setSize(width, height);
+    Pixel32 pin;
+    
+    int dMatrix[2][2] = //ordered dither matrix
+    {
+    {1,3},
+    {4,2}
+    };
+    
+    //quantization values
+    int qBits = pow(2,bits);
+    int valueBit = (MAX_RGB/(qBits-1));
+    int qValues [qBits];
+    for( int i = 0; i < qBits; i++)
+    {
+        qValues[i] = i * valueBit;
+    }
+    
+    for (int x = 0; x < width; x++)
+    {
+        for (int y = 0; y < height; y++)
+        {
+            pin = this->pixel(x,y);
+            i = x % 2; //horizontal
+            j = y % 2; //vertical
+           // printf("x: %d y: %d\n", x, y);
+           // printf("r ");
+            outputImage.pixel(x,y).r = orderedDitherRound(qValues, valueBit, pin.r, qBits, dMatrix, i, j, bits);
+           // printf("g ");
+            outputImage.pixel(x,y).g = orderedDitherRound(qValues, valueBit, pin.g, qBits, dMatrix, i, j, bits);
+           // printf("b ");
+            outputImage.pixel(x,y).b = orderedDitherRound(qValues, valueBit, pin.b, qBits, dMatrix, i, j, bits);
+        }
+    }
+	return 1;
+}
+
+int Image32::FloydSteinbergDither(const int& bits,Image32& outputImage) const
+{
+	return 0;
+}
+
+#define BLUR_MASK_SIZE 3
+#define BLUR_MASK_CENTER .25
+#define BLUR_MASK_PLUS 0.125
+#define BLUR_MASK_CROSS 0.0625
+#define BLUR_MASK_REDISTR_1 .291666 //redistribute value for when one side is missing
+#define BLUR_MASK_REDISTR_2 .4375 //redistribute value for when 2 sides are missing 
+
+/*switch elements of ra1 to that of ra2*/
+void switchMask(float ra1 [][BLUR_MASK_SIZE], float ra2 [][BLUR_MASK_SIZE])
+{
+    for (int i = 0; i < BLUR_MASK_SIZE; i++)
+    {
+        for(int j = 0; j < BLUR_MASK_SIZE; j++)
+        {
+            ra1[i][j] = ra2[i][j];
+        }
+    }
+}
+
+int Image32::Blur3X3(Image32& outputImage) const
+{
+    int width = this->w, height = this->h, i, j, jstart, ilimit, jlimit; //i,j variables account for mask application
+    //edge case of 1 pixel image to prevent crashing
+    if(width == 1 && height == 1) {
+        outputImage = *this;
+        return 1;
+    }
+    outputImage.setSize(width, height);
+    Pixel32 pin;
+    float mask[3][3];
+    
+    //Normal mask
+    float maskN [3][3];
+    maskN[1][1] = BLUR_MASK_CENTER;
+    maskN[0][1] = maskN[1][0] = maskN[2][1] = maskN[1][2] = BLUR_MASK_PLUS;
+    maskN[0][0] = maskN[0][2] = maskN[2][0] = maskN[2][2] = BLUR_MASK_CROSS;
+    //The following masks compensate for losing sides due to borders
+    //Left border
+    float maskL [3][3] = {0};
+    maskL[1][1] = BLUR_MASK_REDISTR_1 + BLUR_MASK_CENTER;
+    maskL[0][1] = maskL[2][1] = maskL[1][2] = BLUR_MASK_REDISTR_1 + BLUR_MASK_PLUS;
+    maskL[0][2] = maskL[2][2] = BLUR_MASK_REDISTR_1 + BLUR_MASK_CROSS;
+    //Right border
+    float maskR [3][3] = {0};
+    maskR[1][1] = BLUR_MASK_REDISTR_1 + BLUR_MASK_CENTER;
+    maskR[0][1] = maskR[2][1] = maskR[1][0] = BLUR_MASK_REDISTR_1 + BLUR_MASK_PLUS;
+    maskR[2][0] = maskR[0][0] = BLUR_MASK_REDISTR_1 + BLUR_MASK_CROSS;
+    //Top
+    float maskT [3][3] = {0};
+    maskT[1][1] = BLUR_MASK_REDISTR_1 + BLUR_MASK_CENTER;
+    maskT[1][2] = maskT[2][1] = maskT[1][0] = BLUR_MASK_REDISTR_1 + BLUR_MASK_PLUS;
+    maskT[2][0] = maskT[2][2] = BLUR_MASK_REDISTR_1 + BLUR_MASK_CROSS;
+    //Bottom
+    float maskB [3][3] = {0};
+    maskB[1][1] = BLUR_MASK_REDISTR_1 + BLUR_MASK_CENTER;
+    maskB[1][2] = maskB[1][0] = maskB[0][1] = BLUR_MASK_REDISTR_1 + BLUR_MASK_PLUS;
+    maskB[0][0] = maskB[0][2] = BLUR_MASK_REDISTR_1 + BLUR_MASK_CROSS;
+    //Topleft corner
+    float maskTL [3][3] = {0};
+    maskTL[1][1] = BLUR_MASK_REDISTR_2 + BLUR_MASK_CENTER;
+    maskTL[1][2] = maskTL[2][1] = BLUR_MASK_REDISTR_2 + BLUR_MASK_PLUS;
+    maskTL[2][2] = BLUR_MASK_REDISTR_2 + BLUR_MASK_CROSS;
+    //Top right
+    float maskTR [3][3] = {0};
+    maskTR[1][1] = BLUR_MASK_REDISTR_2 + BLUR_MASK_CENTER;
+    maskTR[1][0] = maskTR[2][1] = BLUR_MASK_REDISTR_2 + BLUR_MASK_PLUS;
+    maskTR[2][0] = BLUR_MASK_REDISTR_2 + BLUR_MASK_CROSS;
+    //bottom left
+    float maskBL [3][3] = {0};
+    maskBL[1][1] = BLUR_MASK_REDISTR_2 + BLUR_MASK_CENTER;
+    maskBL[1][2] = maskBL[0][1] = BLUR_MASK_REDISTR_2 + BLUR_MASK_PLUS;
+    maskBL[0][2] = BLUR_MASK_REDISTR_2 + BLUR_MASK_CROSS;
+    //bottom right
+    float maskBR [3][3] = {0};
+    maskBR[1][1] = BLUR_MASK_REDISTR_2 + BLUR_MASK_CENTER;
+    maskBR[1][0] = maskBR[0][1] = BLUR_MASK_REDISTR_2 + BLUR_MASK_PLUS;
+    maskBR[0][0] = BLUR_MASK_REDISTR_2 + BLUR_MASK_CROSS;
+    
+    for (int x = 0; x < width; x++)
+    {
+        for (int y = 0; y < height; y++)
+        {            
+            //calculating masked values
+            float maskedR = 0, maskedG = 0, maskedB = 0;
+
+            if(x == 0) {
+                switchMask(mask,maskL); //saves a bit of runtime since the other if statements only happen twice
+                i = 0;
+                jstart = 1;
+                jlimit = BLUR_MASK_SIZE;
+                ilimit = BLUR_MASK_SIZE;
+                if(y == 0) {
+                    switchMask(mask,maskTL);
+                    i = 1;
+                }
+                if(y == height - 1) {
+                    switchMask(mask,maskBL);
+                    ilimit = BLUR_MASK_SIZE - 1;
+                }
+
+            } else if (y == 0) {
+                switchMask(mask,maskT); //saves a bit of runtime since the other if statements only happen twice
+                i = 1;
+                jstart = 0;
+                jlimit = BLUR_MASK_SIZE;
+                ilimit = BLUR_MASK_SIZE;
+                if(x == width - 1) {
+                    switchMask(mask,maskTR);
+                    printf("IN\n");
+                    jlimit = BLUR_MASK_SIZE - 1;
+                }
+
+            } else if (x == width - 1) {
+                switchMask(mask,maskR);
+                i = 0;
+                jstart = 0;
+                jlimit = BLUR_MASK_SIZE - 1;
+                ilimit = BLUR_MASK_SIZE;
+                if(y == height - 1) {
+                    switchMask(mask,maskBR - 1);
+                    ilimit = BLUR_MASK_SIZE - 1;
+                }
+
+            } else if (y == height - 1) {
+                switchMask(mask,maskB);
+                i = 0;
+                jstart = 0;
+                jlimit = BLUR_MASK_SIZE;
+                ilimit = BLUR_MASK_SIZE - 1;
+
+            } else {
+                switchMask(mask,maskN);
+                i = jstart = 0;
+                ilimit = jlimit = BLUR_MASK_SIZE;
+
+            }
+
+            for (; i < ilimit; i++)
+            {
+                j = jstart;
+                for (; j < jlimit; j++)
+                {
+                    pin = this->pixel(x+(j-1), y+(i-1));
+                    maskedR += mask[i][j]*pin.r;
+                    maskedG += mask[i][j]*pin.g;
+                    maskedB += mask[i][j]*pin.b;
+                }
+            }
+            outputImage.pixel(x,y).r = maskedR;
+            outputImage.pixel(x,y).g = maskedG;
+            outputImage.pixel(x,y).b  = maskedB;
+        }
+    }
+    return 1;
+}
+
+#define EDGE_MASK_SIZE 3
+#define EDGE_MASK_CENTER 8
+#define EDGE_MASK_OUTER -1
+#define EDGE_MASK_REDISTR_1 -.5 //redistribute value for when one side is missing
+#define EDGE_MASK_REDISTR_2 -.8 //redistribute value for when 2 sides are missing
+
+int Image32::EdgeDetect3X3(Image32& outputImage) const
+{
+    int width = this->w, height = this->h, i, j, jstart, ilimit, jlimit; //i,j variables account for mask application
+    //edge case of 1 pixel image to prevent crashing
+    if(width == 1 && height == 1) {
+        outputImage = *this;
+        return 1;
+    }
+    outputImage.setSize(width, height);
+    Pixel32 pin;
+    float mask[3][3];
+    
+    //Normal mask
+    float maskN [3][3];
+    maskN[1][1] = EDGE_MASK_CENTER;
+    maskN[0][0] = maskN[1][0] = maskN[2][0] = maskN[0][1] = maskN[2][1] = maskN[0][2] = maskN[1][2] = maskN[2][2] = EDGE_MASK_OUTER;
+    
+    //The following masks compensate for losing sides due to borders
+    float maskL [3][3], maskR [3][3], maskT [3][3], maskB [3][3], maskTL [3][3], maskTR [3][3], maskBL [3][3], maskBR [3][3];
+    
+    //set all compensating masks to equal content of original's
+    for(int l = 0; l < EDGE_MASK_SIZE; l++)
+    {
+        for(int m = 0; m < EDGE_MASK_SIZE; m++)
+        {
+            maskL[l][m] = maskN[l][m];
+            maskR[l][m] = maskN[l][m];
+            maskT[l][m] = maskN[l][m];
+            maskB[l][m] = maskN[l][m];
+            maskTL[l][m] = maskN[l][m];
+            maskTR[l][m] = maskN[l][m];
+            maskBL[l][m] = maskN[l][m];
+            maskBR[l][m] = maskN[l][m];
+        }
+    }
+    //zero out the missing row(s)
+    for(int l = 0; l < EDGE_MASK_SIZE; l++)
+    {
+        maskL[l][0] = 0;
+        maskT[0][l] = 0;
+        maskTL[l][0] = 0;
+        maskTL[0][l] = 0;
+        maskTR[0][l] = 0;
+        maskBL[l][0] = 0;
+    }
+    for(int l = 0; l < EDGE_MASK_SIZE; l++)
+    {
+        maskR[l][EDGE_MASK_SIZE] = 0;
+        maskB[EDGE_MASK_SIZE][l] = 0;
+        maskTR[l][EDGE_MASK_SIZE] = 0;
+        maskBR[l][EDGE_MASK_SIZE] = 0;
+        maskBR[EDGE_MASK_SIZE][l] = 0;
+        maskBL[EDGE_MASK_SIZE][l] = 0;
+    }
+    //add in compensation
+    for (int l = 0; l < EDGE_MASK_SIZE; l++)
+    {
+        for(int m = 1; m < EDGE_MASK_SIZE; m++)
+        {
+            maskL[l][m] += EDGE_MASK_REDISTR_1;
+            maskT[m][l] += EDGE_MASK_REDISTR_1;
+            maskL[l][m] += EDGE_MASK_REDISTR_1;
+        }
+    }
+    for(int m = 1; m < EDGE_MASK_SIZE; m++)
+        {
+            maskTL[1][m] += EDGE_MASK_REDISTR_2;
+            maskTL[2][m] += EDGE_MASK_REDISTR_2;
+            maskTR[0][m] += EDGE_MASK_REDISTR_2;
+            maskTR[1][m] += EDGE_MASK_REDISTR_2;
+            maskBL[m][0] += EDGE_MASK_REDISTR_2;
+            maskBL[m][1] += EDGE_MASK_REDISTR_2;
+            maskBR[m][1] += EDGE_MASK_REDISTR_2;
+            maskBR[m][2] += EDGE_MASK_REDISTR_2;
+        }
+    for (int x = 0; x < width; x++)
+    {
+        for (int y = 0; y < height; y++)
+        {            
+            //calculating masked values
+            float maskedR = 0, maskedG = 0, maskedB = 0;
+            if(x == 0) {
+                switchMask(mask,maskL); //saves a bit of runtime since the other if statements only happen twice
+                i = 0;
+                jstart = 1;
+                jlimit = EDGE_MASK_SIZE;
+                ilimit = EDGE_MASK_SIZE;
+                if(y == 0) {
+                    switchMask(mask,maskTL);
+                    i = 1;
+                }
+                if(y == height - 1) {
+                    switchMask(mask,maskBL);
+                    ilimit = EDGE_MASK_SIZE - 1;
+                }
+            } else if (y == 0) {
+                switchMask(mask,maskT); //saves a bit of runtime since the other if statements only happen twice
+                i = 1;
+                jstart = 0;
+                jlimit = EDGE_MASK_SIZE;
+                ilimit = EDGE_MASK_SIZE;
+                if(x == width - 1) {
+                    switchMask(mask,maskTR);
+                    printf("IN\n");
+                    jlimit = EDGE_MASK_SIZE - 1;
+                }
+            } else if (x == width - 1) {
+                switchMask(mask,maskR);
+                i = 0;
+                jstart = 0;
+                jlimit = EDGE_MASK_SIZE - 1;
+                ilimit = EDGE_MASK_SIZE;
+                if(y == height - 1) {
+                    switchMask(mask,maskBR - 1);
+                    ilimit = EDGE_MASK_SIZE - 1;
+                }
+            } else if (y == height - 1) {
+                switchMask(mask,maskB);
+                i = 0;
+                jstart = 0;
+                jlimit = EDGE_MASK_SIZE;
+                ilimit = EDGE_MASK_SIZE - 1;
+            } else {
+                switchMask(mask,maskN);
+                i = jstart = 0;
+                ilimit = jlimit = EDGE_MASK_SIZE;
+            }
+            for (; i < ilimit; i++)
+            {
+                j = jstart;
+                for (; j < jlimit; j++)
+                {
+                   
+                    pin = this->pixel(x+(j-1), y+(i-1));
+                    maskedR += mask[i][j]*pin.r;
+                    maskedG += mask[i][j]*pin.g;
+                    maskedB += mask[i][j]*pin.b;
+                }
+            }
+            outputImage.pixel(x,y).r = rgbTruncate(maskedR);
+            outputImage.pixel(x,y).g = rgbTruncate(maskedG);
+            outputImage.pixel(x,y).b  = rgbTruncate(maskedB);
+        }
+    }
+    return 1;
+}
+
+int Image32::ScaleNearest(const float& scaleFactor,Image32& outputImage) const
+{
+    int width = (this->w)*scaleFactor, height = (this->h)*scaleFactor; //width and height are that of the outputImage's
+    outputImage.setSize(width, height);
+    Pixel32 pin;
+    for (int x = 0; x < width; x++)
+    {
+        for (int y = 0; y < height; y++)
+        {
+            pin = this->NearestSample(x/scaleFactor,y/scaleFactor);
+            outputImage.pixel(x,y).r = pin.r;
+            outputImage.pixel(x,y).g = pin.g;
+            outputImage.pixel(x,y).b  = pin.b;
+        }
+    }
+	return 1;
+}
+
+int Image32::ScaleBilinear(const float& scaleFactor,Image32& outputImage) const
+{
+	int width = (this->w)*scaleFactor, height = (this->h)*scaleFactor; //width and height are that of the outputImage's
+    outputImage.setSize(width, height);
+    Pixel32 pin;
+    for (int x = 0; x < width; x++)
+    {
+        for (int y = 0; y < height; y++)
+        {
+            pin = this->BilinearSample(x/scaleFactor,y/scaleFactor);
+            outputImage.pixel(x,y).r = pin.r;
+            outputImage.pixel(x,y).g = pin.g;
+            outputImage.pixel(x,y).b  = pin.b;
+        }
+    }
+	return 1;
+}
+
+int Image32::ScaleGaussian(const float& scaleFactor,Image32& outputImage) const
+{
+	int width = (this->w)*scaleFactor, height = (this->h)*scaleFactor; //width and height are that of the outputImage's
+    outputImage.setSize(width, height);
+    Pixel32 pin;
+    for (int x = 0; x < width; x++)
+    {
+        for (int y = 0; y < height; y++)
+        {
+            pin = this->GaussianSample(x/scaleFactor,y/scaleFactor, .2, 1/scaleFactor);
+            outputImage.pixel(x,y).r = rgbTruncate(pin.r);
+            outputImage.pixel(x,y).g = rgbTruncate(pin.g);
+            outputImage.pixel(x,y).b  = rgbTruncate(pin.b);
+        }
+    }
+	return 1;
+}
+
+#define PI 3.14159265
+
+int Image32::RotateNearest(const float& angle,Image32& outputImage) const
+{
+    int width = this->w, height = this->h;
+    int outWidth = abs(height*sin(angle*PI/180)) + abs(width*cos(angle*PI/180)); //accounting for extra space needed for rotated image
+    int outHeight = abs(height*cos(angle*PI/180)) + abs(width*sin(angle*PI/180));
+    outputImage.setSize(outWidth, outHeight);
+    Pixel32 pin, pout;
+    //rotated image center
+    int dcx = outWidth/2;
+    int dcy = outHeight/2;
+    //original image center
+    int ocx = width/2;
+    int ocy = height/2;
+    
+    float u,v; //coordinates for the src image
+    
+    for (int x = 0; x < outWidth; x++)
+    {
+        for (int y = 0; y < outHeight; y++)
+        {
+            u = (x-dcx)*cos(angle*PI/180) - (y-dcy)*sin(angle*PI/180) +ocx;
+            v = (x-dcx)*sin(angle*PI/180) + (y-dcy)*cos(angle*PI/180)+ocy;
+            if (u < 0 || u >= width || v < 0 || v >= height)
+            {
+               pin = pout; //pout is a black pixel, which we will use for if (u,v) is out of bounds of the original image.
+            } else {
+                pin = NearestSample(u,v);
+            }
+            
+            outputImage.pixel(x,y).r = pin.r;
+            outputImage.pixel(x,y).g = pin.g;
+            outputImage.pixel(x,y).b  = pin.b;
+        }
+    }
+	return 1;
+}
+
+int Image32::RotateBilinear(const float& angle,Image32& outputImage) const
+{
+    int width = this->w, height = this->h;
+    int outWidth = abs(height*sin(angle*PI/180)) + abs(width*cos(angle*PI/180)); //accounting for extra space needed for rotated
+    int outHeight = abs(height*cos(angle*PI/180)) + abs(width*sin(angle*PI/180));
+    outputImage.setSize(outWidth, outHeight);
+    Pixel32 pin, pout;
+    //rotated image center
+    int dcx = outWidth/2;
+    int dcy = outHeight/2;
+    //original image center
+    int ocx = width/2;
+    int ocy = height/2;
+    
+    float u,v; //coordinates for the src image
+    
+    for (int x = 0; x < outWidth; x++)
+    {
+        for (int y = 0; y < outHeight; y++)
+        {
+            u = (x-dcx)*cos(angle*PI/180) - (y-dcy)*sin(angle*PI/180) +ocx;
+            v = (x-dcx)*sin(angle*PI/180) + (y-dcy)*cos(angle*PI/180)+ocy;
+            if (u < 0 || u >= width || v < 0 || v >= height)
+            {
+               pin = pout; //pout is a black pixel, which we will use for if (u,v) is out of bounds of the original image.
+            } else {
+                pin = BilinearSample(u,v);
+            }
+            
+            outputImage.pixel(x,y).r = pin.r;
+            outputImage.pixel(x,y).g = pin.g;
+            outputImage.pixel(x,y).b  = pin.b;
+        }
+    }
+	return 1;
+}
+	
+int Image32::RotateGaussian(const float& angle,Image32& outputImage) const
+{
+    int width = this->w, height = this->h;
+    int outWidth = abs(height*sin(angle*PI/180) + width*cos(angle*PI/180)); //accounting for extra space needed for rotated image
+    int outHeight = abs(height*cos(angle*PI/180) + width*sin(angle*PI/180));
+    outputImage.setSize(outWidth, outHeight);
+    Pixel32 pin, pout;
+    //rotated image center
+    int dcx = outWidth/2;
+    int dcy = outHeight/2;
+    //original image center
+    int ocx = width/2;
+    int ocy = height/2;
+    
+    float u,v; //coordinates for the src image
+    
+    for (int x = 0; x < outWidth; x++)
+    {
+        for (int y = 0; y < outHeight; y++)
+        {
+            u = (x-dcx)*cos(angle*PI/180) - (y-dcy)*sin(angle*PI/180) +ocx;
+            v = (x-dcx)*sin(angle*PI/180) + (y-dcy)*cos(angle*PI/180)+ocy;
+            if (u < 0 || u >= width || v < 0 || v >= height)
+            {
+               pin = pout; //pout is a black pixel, which we will use for if (u,v) is out of bounds of the original image.
+            } else {
+                pin = GaussianSample(u,v,.1,2);
+            }
+            
+            outputImage.pixel(x,y).r = pin.r;
+            outputImage.pixel(x,y).g = pin.g;
+            outputImage.pixel(x,y).b  = pin.b;
+        }
+    }
+	return 1;
+}
+
+#define ALPHA_COMPOSITE_FACTOR 8
+
+int Image32::SetAlpha(const Image32& matte)
+{
+    int width = this->w, height = this->h;
+    int maxDiv = 0;
+    for (int x = 0; x < width; x++)
+    {
+        for (int y = 0; y < height; y++)
+        {
+            if(matte.pixel(x,y).b < MAX_RGB/ALPHA_COMPOSITE_FACTOR && maxDiv < matte.pixel(x,y).b )
+            {
+                maxDiv = matte.pixel(x,y).b;
+            }
+        }
+    }
+    for (int x = 0; x < width; x++)
+    {
+        for (int y = 0; y < height; y++)
+        {
+            if(matte.pixel(x,y).b < maxDiv + 1)
+            {
+                this->pixel(x,y).a = 0;
+            }
+        }
+    }
+}
+
+int Image32::Composite(const Image32& overlay,Image32& outputImage) const
+{
+    int width = this->w, height = this->h;
+    outputImage.setSize(width, height);
+    for (int x = 0; x < width; x++)
+    {
+        for (int y = 0; y < height; y++)
+        {
+            if(overlay.pixel(x,y).a != 0)
+            {
+                outputImage.pixel(x,y) = overlay.pixel(x,y);
+            } else {
+                outputImage.pixel(x,y) = this->pixel(x,y);
+            }
+        }
+    }
+	return 1;
+}
+
+int Image32::CrossDissolve(const Image32& source,const Image32& destination,const float& blendWeight,Image32& ouputImage)
+{
+	return 0;
+}
+int Image32::Warp(const OrientedLineSegmentPairs& olsp,Image32& outputImage) const
+{
+	return 0;
+}
+
+int Image32::FunFilter(Image32& outputImage) const
+{
+//'swirl' fun filter
+    int width = this->w, height = this->h;
+    outputImage.setSize(width, height);
+    Pixel32 pin, pout;
+    
+    //fun filter variables
+    int rot = 0; //how swirled/rotated the image will be
+    int size = width/2; //size of rotation on image
+    int angle; //actual angle of rotation
+    int u,v,xm,ym;
+    
+    //original image center
+    int ocx = width/2;
+    int ocy = height/2;
+    
+    //x,y are for destination image coordinates; u,v are for source image coordinates
+    for (int x = 0; x < width; x++)
+    {
+        for (int y = 0; y < height; y++)
+        {
+            xm = x-ocx;
+            ym = y - ocy;
+            angle = pow(rot, (xm*xm+ym*ym)/(size*size));
+            u = cos(angle)*xm + sin(angle)*ym + ocx;
+            v = -sin(angle)*xm + cos(angle)*ym + ocy;
+            //u = cos(angle)*u + sin(angle)*v + ocx;
+            //v = -sin(angle)*u + cos(angle)*v + ocy;
+            if (u < 0 || u >= width || v < 0 || v >= height)
+            {
+               pin = pout; //pout is a black pixel, which we will use for if (u,v) is out of bounds of the original image.
+            } else {
+                //pin = BilinearSample(u,v);
+                pin = GaussianSample(u,v,.2,100);
+            }
+
+            outputImage.pixel(x,y).r = pin.r;
+            outputImage.pixel(x,y).g = pin.g;
+            outputImage.pixel(x,y).b = pin.b;
+        }
+    }
+
+	return 1;
+}
+int Image32::Crop(const int& x1,const int& y1,const int& x2,const int& y2,Image32& outputImage) const
+{
+    int width = this->w, height = this->h, rNum;
+    if (x1 <= x2 <= width && y1 <= y2 <= height)
+    {
+        //replacing width and height to be that of the output image's
+        width = x2 - x1;
+        height = y2 - y1;
+        outputImage.setSize(width, height);
+        Pixel32 pin;
+        int ox, oy;
+        
+        for (int x = x1; x < x2; x++)
+        {
+            for (int y = y1; y < y2; y++)
+            {
+                pin = this->pixel(x,y);
+                //account for the change in xy values for outputImage
+                ox = x - x1;
+                oy = y - y1;
+                outputImage.pixel(ox,oy).r = pin.r;
+                outputImage.pixel(ox,oy).g = pin.g;
+                outputImage.pixel(ox,oy).b = pin.b;
+            }
+        }
+        return 1;
+    }
+	return 0;
+}
+
+
+Pixel32 Image32::NearestSample(const float& x,const float& y) const
+{
+    int width = this->w, height = this->h;
+                
+    if(x >= 0 && x <= width && y >= 0 && y <= height)
+    {
+        return this->pixel(floor(x),floor(y));
+    }
+    perror("Pixel was out of bounds.");
+    return Pixel32(); //error
+}
+Pixel32 Image32::BilinearSample(const float& x,const float& y) const
+{
+    int width = this->w, height = this->h;
+    int u1, u2, v1, v2, du, dv, ar, br, ab, bb, ag, bg;
+    Pixel32 pout;
+    if(x >= 0 && x < width && y >= 0 && y < height)
+    { //following algorithm courtesy of provided lecture notes
+        u1 = floor( x );
+        if (u1 != width -1)
+            u2 = u1 + 1;
+        else
+            u2 = u1;
+        v1 = floor( y );
+        if (v1 != height -1)
+            v2 = v1 + 1;
+        else
+            v2 = v1;
+        du = x - u1;
+        dv = y - v1;
+        ar = this->pixel(u1,v1).r*(1-du) + this->pixel(u2,v1).r*du;
+        br = this->pixel(u1,v2).r*(1-du) + this->pixel(u2,v2).r*du;
+        ag = this->pixel(u1,v1).g*(1-du) + this->pixel(u2,v1).g*du;
+        bg = this->pixel(u1,v2).g*(1-du) + this->pixel(u2,v2).g*du;
+        ab = this->pixel(u1,v1).b*(1-du) + this->pixel(u2,v1).b*du;
+        bb = this->pixel(u1,v2).b*(1-du) + this->pixel(u2,v2).b*du;
+        pout.r = ar*(1-dv) + br*dv;
+        pout.g = ag*(1-dv) + bg*dv;
+        pout.b = ab*(1-dv) + bb*dv;
+        return pout;
+    }
+    
+    perror("Pixel was out of bounds.");
+	return Pixel32(); //error
+}
+Pixel32 Image32::GaussianSample(const float& x,const float& y,const float& variance,const float& radius) const
+{
+
+    int width = this->w;
+    int height = this->h;
+    int r = trunc(radius);
+    float rtotal = 0;
+    float gtotal = 0;
+    float btotal = 0;
+    float g = 0;
+    float efactor = 0;
+    
+    for(int i = -1*r; i <= r; i++)
+    {
+        for(int j = -1*r; j <= r; j++)
+        {
+            efactor = exp((-1*(pow(i,2)+pow(j,2))/(2*pow(variance,2))));
+            g = (1/(pow(variance,2)*2*PI))*efactor;
+            int u = x + i;
+            int v = y + j;
+            if(u <0) {
+                u= 0;
+            }
+            if(v < 0) {
+                v = 0;
+            }
+            rtotal += g*this->pixel(u % width, v % height).r;
+            gtotal += g*this->pixel(u % width, v % height).g;
+            btotal += g*this->pixel(u % width, v % height).b;
+        }
+    }
+    
+    Pixel32 pout;
+    pout.r = (int)rtotal % 256;
+    pout.g = (int)gtotal % 256;
+    pout.b = (int)btotal % 256;
+    return pout;
+    
+    /*int width = this->w, height = this->h, i, j, jstart, ilimit, jlimit; //i,j variables account for mask application
+    //edge case of 1 pixel image to prevent crashing
+    Pixel32 pin;
+    int radiusRing = radius;
+    int weight;
+    int sampleRadius =2*radius+1;
+    int load_sampleRadius = sampleRadius;
+    float mask[sampleRadius][sampleRadius];
+    int di,dj;
+    for(int i = radius; i>=0; i--)
+    {
+        weight = (1/(sqrt(2*PI)/variance))*exp(-(radiusRing*radiusRing)/(2*variance*variance));
+        printf("weight: %d radiusRing: %d\n", weight, radiusRing);
+        for(int k = 0; k < load_sampleRadius; k++)
+        {
+            mask[0][k] = weight;
+            mask[k][0] = weight;
+            mask[k][load_sampleRadius];
+            mask[load_sampleRadius][k];
+        }
+        radiusRing--;
+        load_sampleRadius = load_sampleRadius - 2;
+    }
+
+    
+    for(int i = 0; i < sampleRadius; i++)
+    {
+        for(int j = 0; j < sampleRadius; j++)
+        {
+            
+            printf("value: %f i: %d j: %d\n", mask[i][j], i, j);
+        }
+    }
+
+    return pin;*/
+/*
+    Pixel32 pout;
+    //Round the given values give integer origin value
+    int ox = (int)floor(x);
+    int oy = (int)floor(y);
+
+    double d1 = (x - ox)*(x - ox) + (y - oy) * (y - oy);
+    double d2 = (x - ox - 1)*(x - ox - 1) + (y - oy) * (y - oy);
+    double d3 = (x - ox - 1)*(x - ox - 1) + (y - oy - 1) * (y - oy - 1);
+    double d4 = (x - ox)*(x - ox) + (y - oy - 1)*(y - oy - 1);
+    
+    double weight1 = 1/sqrt(2*PI)/variance*exp(-d1/2/variance/variance);
+    double weight2 = 1/sqrt(2*PI)/variance*exp(-d2/2/variance/variance);
+    double weight3 = 1/sqrt(2*PI)/variance*exp(-d3/2/variance/variance);
+    double weight4 = 1/sqrt(2*PI)/variance*exp(-d4/2/variance/variance);
+    
+    //normalizing
+    double sum = weight1 + weight2 + weight3 + weight4;
+    weight1 = weight1 / sum;
+    weight2 = weight2 / sum;
+    weight3 = weight3 / sum;
+    weight4 = weight4 / sum;
+
+    if (ox >= 0 && ox < this->w && oy >= 0 && oy < this->h) {
+        pout.r = pout.r + this->pixel(ox,oy).r * (weight1);
+        pout.g = pout.g+ this->pixel(ox,oy).g * (weight1);
+        pout.b = pout.b + this->pixel(ox,oy).b * (weight1);
+    }
+    if (ox+1 >= 0 && ox+1 < this->w && oy >= 0 && oy < this->h) {
+        pout.r = pout.r + this->pixel(ox+1, oy).r * (weight2);
+        pout.g = pout.g + this->pixel(ox+1, oy).g * (weight2);
+        pout.b = pout.b + this->pixel(ox+1, oy).b * (weight2);
+    }
+    if (ox+1 >= 0 && ox+1 < this->w && oy+1 >= 0 && oy+1 < this->h) {
+        pout.r = pout.r + this->pixel(ox+1, oy+1).r * (weight3);
+        pout.g = pout.g + this->pixel(ox+1, oy+1).g * (weight3);
+        pout.b = pout.b + this->pixel(ox+1, oy+1).b * (weight3);
+    }
+    if (ox >= 0 && ox < this->w && oy+1 >= 0 && oy+1 < this->h) {
+        pout.r = pout.r + this->pixel(ox, oy+1).r * (weight4);
+        pout.g = pout.g + this->pixel(ox, oy+1).g * (weight4);
+        pout.b = pout.b + this->pixel(ox, oy+1).b * (weight4);
+    }
+*/
+    //return pout;
+}
